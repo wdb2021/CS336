@@ -4,6 +4,7 @@ import os
 from typing import IO, Any, BinaryIO
 from collections.abc import Iterable
 from jaxtyping import Float, Int
+from collections import defaultdict
 
 import numpy.typing as npt
 import torch
@@ -589,15 +590,77 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
+    # initial vocab
+    vocab = {i:bytes([i]) for i in range(256)}
+    next_id = 256
+
     with open(input_path, "rb", ) as f:
         text = f.read()
-    end_index = text.decode('utf-8').find("<|endoftext|>")
 
-    if end_index != -1:
-        print(len(text))
-        text_list = list(text)
-        print(text_list)
-    else:
-        print("not found <|endoftext|>")
+    text_segs = text.split(special_tokens[0].encode('utf-8'))
 
-    raise NotImplementedError
+    tokens = [bytes([b]) for text_seg in text_segs for b in text_seg]
+    print(f"初始tokens({len(tokens)}): {[t for t in tokens]}")
+    # print(text_list)
+    # print(tokens)
+
+    merges = []
+
+    while len(vocab) < vocab_size:
+        freq = get_pair_frequency(tokens)
+        if not freq:
+            break
+
+        most_frequent_pair = max(freq, key=freq.get)
+        A, B = most_frequent_pair
+        print(f"most_frequent_pair:{most_frequent_pair} -- {A}:{B}")
+        frequency = freq[most_frequent_pair]
+        print(f"合并: {A} + {B} (频率: {frequency})")
+
+        new_token = A+B
+        vocab[next_id] = new_token
+        next_id += 1
+
+        merges.append((A, B))
+
+        new_tokens = []
+        i = 0
+        while i < len(tokens):
+            if tokens[i] == A and i < len(tokens) - 1 and tokens[i + 1] == B:
+                new_tokens.append(new_token)
+                i += 2
+            else:
+                new_tokens.append(tokens[i])
+                i += 1
+        tokens = new_tokens
+
+        # 打印当前状态（仅用于演示）
+        print(f"当前词汇表大小: {len(vocab)}")
+        print(f"当前tokens: {[t for t in tokens[:20]]}...")
+        print("---")
+
+    for special_token in special_tokens:
+        special_bytes = special_token.encode('utf-8')
+        if special_bytes not in vocab.values():
+            vocab[next_id] = special_bytes
+            next_id += 1
+
+
+    return vocab, merges
+
+    # raise NotImplementedError
+def get_pair_frequency(tokens) -> dict[tuple[int, int], int]:
+    """Given a list of tokens, return a dictionary mapping each pair of tokens
+    to the number of times that pair of tokens appear in the list.
+
+    Args:
+        tokens (list[int]): A list of token IDs.
+
+    Returns:
+        dict[tuple[int, int], int]: A dictionary mapping each pair of tokens
+            to the number of times that pair of tokens appear in the list.
+    """
+    freq = defaultdict(int)
+    for i in range(len(tokens) - 1):
+        freq[(tokens[i], tokens[i + 1])] += 1
+    return freq
