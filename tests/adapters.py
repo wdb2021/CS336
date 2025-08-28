@@ -5,6 +5,7 @@ from typing import IO, Any, BinaryIO
 from collections.abc import Iterable
 from jaxtyping import Float, Int
 from collections import defaultdict
+import time
 
 import numpy.typing as npt
 import torch
@@ -589,14 +590,18 @@ def run_train_bpe(
                 BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
+
+    ##todo 文件分块读取和合并；多线程合并操作
     """
     # initial vocab
-    vocab = {i:bytes([i]) for i in range(256)}
+    start_time = time.time()
+    vocab = {bytes([i]):i for i in range(256)}
     next_id = 256
 
     with open(input_path, "rb", ) as f:
         text = f.read()
 
+    original_byte_count = len(text)
     text_segs = text.split(special_tokens[0].encode('utf-8'))
 
     tokens = [bytes([b]) for text_seg in text_segs for b in text_seg]
@@ -618,7 +623,7 @@ def run_train_bpe(
         print(f"合并: {A} + {B} (频率: {frequency})")
 
         new_token = A+B
-        vocab[next_id] = new_token
+        vocab[new_token] = next_id
         next_id += 1
 
         merges.append((A, B))
@@ -642,9 +647,22 @@ def run_train_bpe(
     for special_token in special_tokens:
         special_bytes = special_token.encode('utf-8')
         if special_bytes not in vocab.values():
-            vocab[next_id] = special_bytes
+            vocab[special_bytes] = next_id
+            print(f"{next_id}: {vocab[special_bytes]}")
             next_id += 1
 
+    # calculate compression ratio
+    final_token_count = len(tokens)
+    compression_ratio = original_byte_count / final_token_count if final_token_count > 0 else 0
+    print(f"压缩比: {compression_ratio:.2f}")
+
+    # calculate throughput
+    end_time = time.time()
+    processing_time = end_time - start_time
+    throughput = original_byte_count / processing_time if processing_time > 0 else 0
+
+    print(f"压缩比: {compression_ratio:.2f} 字节/Token")
+    print(f"吞吐率: {throughput:.2f} 字节/秒")
 
     return vocab, merges
 
