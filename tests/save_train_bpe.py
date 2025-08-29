@@ -4,29 +4,31 @@ from adapters import run_train_bpe
 import json
 import os
 import time
+from a_get_tokenizer import BPETokenizer
 
 input_path = "D:\Model\cs336\\assignment1-basics-main\\tests\\fixtures\\tinystories_sample_5M.txt"
 vocab_size = 1500
 special_tokens = ["<|endoftext|>"] #"<unk>", "<bos>", "<eos>",
 merges_file = 'merges_5M.txt'
 vocab_file = 'vocab_5M.json'
+vocab_file_id2token = 'vocab_5M_id2token.json'
 
 print("run_train_bpe")
 start_time = datetime.now()
-vocab, merges = run_train_bpe(input_path, vocab_size, special_tokens, num_merges=100)
+# vocab, merges = run_train_bpe(input_path, vocab_size, special_tokens, num_merges=100)
 # print(f"vocab({len(vocab)}): {vocab}")
 # print(f"merges({len(merges)}): {merges}")
 end_time = datetime.now()
 
 # 将vocab保存为JSON文件
-vocab_dict = {}
-for token, id in vocab.items():
-    token_str = token.decode('latin-1')
-    token_str = token_str.replace(' ', 'Ġ') #替换空格
-    vocab_dict[token_str] = id
-
-with open(vocab_file, 'w', encoding='utf-8') as f:
-    json.dump(vocab_dict, f, ensure_ascii=False, indent=2)
+# vocab_dict = {}
+# for token, id in vocab.items():
+#     token_str = token.decode('latin-1')
+#     token_str = token_str.replace(' ', 'Ġ') #替换空格
+#     vocab_dict[token_str] = id
+#
+# with open(vocab_file, 'w', encoding='utf-8') as f:
+#     json.dump(vocab_dict, f, ensure_ascii=False, indent=2)
 #
 
 # 将merges保存为文本文件
@@ -37,18 +39,37 @@ with open(vocab_file, 'w', encoding='utf-8') as f:
 #         a_str = a.decode('latin-1').replace(' ', 'Ġ')
 #         b_str = b.decode('latin-1').replace(' ', 'Ġ')
 #         f.write(f"{a_str} {b_str}\n")
-# merges_loaded = []
-#
-# with open(merges_file, 'r', encoding='utf-8') as f:
-#     for line in f:
-#         parts = line.strip().split()
-#         if len(parts) == 2:
-#             a = parts[0].replace('Ġ', ' ').encode('latin-1')
-#             b = parts[1].replace('Ġ', ' ').encode('latin-1')
-#             merges_loaded.append((a, b))
-# print(merges_loaded)
-# print(f"start time: {start_time}, end time: {end_time}")
-# print(f"vocab: {vocab_size}, merges: {len(merges)}")
+
+# 读取merges
+merges_loaded = []
+with open(merges_file, 'r', encoding='utf-8') as f:
+    for line in f:
+        parts = line.strip().split()
+        if len(parts) == 2:
+            a = parts[0].replace('Ġ', ' ').encode('latin-1')
+            b = parts[1].replace('Ġ', ' ').encode('latin-1')
+            merges_loaded.append((a, b))
+print(merges_loaded)
+print(f"start time: {start_time}, end time: {end_time}")
+print(f"vocab: {vocab_size}, merges: {len(merges_loaded)}")
+
+# 读取vocab
+with open(vocab_file_id2token, 'r', encoding='utf-8') as f:
+    vocab_json = json.load(f)
+
+# for token, id in vocab_json.items():
+#     vocab_loaded[id] = token.encode('latin-1')
+vocab_loaded = {}
+for id_str, token_str in vocab_json.items():
+    # 将 id 字符串转换为整数
+    token_id = int(id_str)
+    token_bytes = token_str.encode('latin1')
+    vocab_loaded[token_id] = token_bytes
+print(vocab_loaded)
+
+tokenizer = BPETokenizer.get_tokenizer(vocab_loaded, merges_loaded, special_tokens)
+print(tokenizer.encode("hello, world"))
+print(tokenizer.decode([285, 288, 111, 196, 160, 573, 705]))
 
 #start time: 2025-08-27 10:31:55.450740, end time: 2025-08-27 10:35:03.237085
 # 300: 300

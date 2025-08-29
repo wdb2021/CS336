@@ -591,7 +591,8 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
 
-    ##todo 文件分块读取和合并；多线程合并操作
+    ##TODO:文件分块读取和合并；多线程合并操作
+    ##TODO:先将空白字符替换后再重新训练 (' ', 'Ġ') ('\n', 'Ċ') ('\t', 'ĉ')
     """
     # initial vocab
     start_time = time.time()
