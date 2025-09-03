@@ -71,6 +71,7 @@ tokenizer = BPETokenizer.get_tokenizer(vocab_loaded, merges_loaded, special_toke
 print(tokenizer.encode("hello, world"))
 print(tokenizer.decode([285, 288, 111, 196, 160, 573, 705]))
 
+# ssh -T git@github.com
 #start time: 2025-08-27 10:31:55.450740, end time: 2025-08-27 10:35:03.237085
 # 300: 300
 # 压缩比: 1.55
