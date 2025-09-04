@@ -1,6 +1,9 @@
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+import torch
+
+
 class BPETokenizer:
     def __init__(self, vocab: Dict[int, bytes], merges: List[Tuple[bytes, bytes]], special_tokens: Optional[List[str]] = None):
         """
@@ -104,3 +107,56 @@ class BPETokenizer:
         """
         return BPETokenizer(vocab, merges, special_tokens)
 
+    def apply_rope(self, x, positions=None, rope_freq=10000.0):
+        """
+        应用 RoPE 位置编码，简易实现（支持完整序列和自回归生成）
+
+        参数:
+            x: 输入张量 (batch_size, seq_len, d_model)
+            rope_freq: RoPE 频率参数
+
+        返回:
+            添加了 RoPE 的嵌入向量
+        """
+        batch_size, seq_len, d_model = x.shape
+        device = x.device
+
+        # 处理位置索引
+        if positions is None:
+            # 默认连续位置索引[0, 1, 2, ..., seq_len-1]
+            positions = torch.arange(seq_len, device=device).float().unsqueeze(0)
+        else:
+            # 确保位置索引形状为(batch_size, seq_len)
+            positions = positions.to(device).float()
+            if positions.dim() == 1:
+                positions = positions.unsqueeze(0)
+
+        # 当用户只提供了单个序列的位置索引，但需要处理多个序列时
+        # 扩展位置索引以匹配批次大小
+        if positions.size(0) == 1 and batch_size > 1:
+            positions = positions.expand(batch_size, positions.size(1))
+
+        # 创建频率项
+        dim_indices = torch.arange(0, d_model, 2, device=device).float()
+        inv_freq = 1.0 / (rope_freq ** (dim_indices / d_model))
+
+        # 计算正余弦值
+        freqs = torch.einsum('bi, j->bij', positions, inv_freq)
+        sin = torch.sin(freqs)
+        cos = torch.cos(freqs)
+
+        # 将嵌入向量分为两部分
+        x1 = x[:, :, 0::2]    #偶数索引
+        x2 = x[..., :, 1::2]  #奇数索引
+
+        # 应用 RoPE 旋转编码
+        rotated_x1 = x1 * cos - x2 * sin
+        rotated_x2 = x1 * sin + x2 * cos
+
+        # 重新组合
+        rotated = torch.stack([rotated_x1, rotated_x2], dim=-1)
+        rotated = rotated.reshape(batch_size, seq_len, d_model)
+        # reshape可以处理非连续张量，而view只能处理连续张量
+        # rotated = rotated.view(batch_size, seq_len, d_model)
+
+        return rotated

@@ -1,5 +1,8 @@
 from datetime import datetime
 
+import torch
+from torch import nn
+
 from adapters import run_train_bpe
 import json
 import os
@@ -39,37 +42,6 @@ end_time = datetime.now()
 #         a_str = a.decode('latin-1').replace(' ', 'Ġ')
 #         b_str = b.decode('latin-1').replace(' ', 'Ġ')
 #         f.write(f"{a_str} {b_str}\n")
-
-# 读取merges
-merges_loaded = []
-with open(merges_file, 'r', encoding='utf-8') as f:
-    for line in f:
-        parts = line.strip().split()
-        if len(parts) == 2:
-            a = parts[0].replace('Ġ', ' ').encode('latin-1')
-            b = parts[1].replace('Ġ', ' ').encode('latin-1')
-            merges_loaded.append((a, b))
-print(merges_loaded)
-print(f"start time: {start_time}, end time: {end_time}")
-print(f"vocab: {vocab_size}, merges: {len(merges_loaded)}")
-
-# 读取vocab
-with open(vocab_file_id2token, 'r', encoding='utf-8') as f:
-    vocab_json = json.load(f)
-
-# for token, id in vocab_json.items():
-#     vocab_loaded[id] = token.encode('latin-1')
-vocab_loaded = {}
-for id_str, token_str in vocab_json.items():
-    # 将 id 字符串转换为整数
-    token_id = int(id_str)
-    token_bytes = token_str.encode('latin1')
-    vocab_loaded[token_id] = token_bytes
-print(vocab_loaded)
-
-tokenizer = BPETokenizer.get_tokenizer(vocab_loaded, merges_loaded, special_tokens)
-print(tokenizer.encode("hello, world"))
-print(tokenizer.decode([285, 288, 111, 196, 160, 573, 705]))
 
 # ssh -T git@github.com
 #start time: 2025-08-27 10:31:55.450740, end time: 2025-08-27 10:35:03.237085
@@ -117,3 +89,47 @@ print(tokenizer.decode([285, 288, 111, 196, 160, 573, 705]))
 # print(hex(ord('中')))
 # print(list('中'.encode('utf-8')))
 # print(chr(97))
+
+# 读取merges
+merges_loaded = []
+with open(merges_file, 'r', encoding='utf-8') as f:
+    for line in f:
+        parts = line.strip().split()
+        if len(parts) == 2:
+            a = parts[0].replace('Ġ', ' ').encode('latin-1')
+            b = parts[1].replace('Ġ', ' ').encode('latin-1')
+            merges_loaded.append((a, b))
+print(merges_loaded)
+print(f"start time: {start_time}, end time: {end_time}")
+print(f"vocab: {vocab_size}, merges: {len(merges_loaded)}")
+
+# 读取vocab
+with open(vocab_file_id2token, 'r', encoding='utf-8') as f:
+    vocab_json = json.load(f)
+
+# for token, id in vocab_json.items():
+#     vocab_loaded[id] = token.encode('latin-1')
+vocab_loaded = {}
+for id_str, token_str in vocab_json.items():
+    # 将 id 字符串转换为整数
+    token_id = int(id_str)
+    token_bytes = token_str.encode('latin1')
+    vocab_loaded[token_id] = token_bytes
+print(vocab_loaded)
+
+tokenizer = BPETokenizer.get_tokenizer(vocab_loaded, merges_loaded, special_tokens)
+
+text = "hello, world"
+print(tokenizer.encode(text))
+print(tokenizer.decode([285, 288, 111, 44, 196, 160, 573, 705]))
+
+token_ids_list = tokenizer.encode(text)
+token_ids_tensor = torch.tensor(token_ids_list, dtype=torch.long).unsqueeze(0)
+
+print("Token IDs 张量形状:", token_ids_tensor.shape)  # torch.Size([1, 8])
+# todo: Ablation Study, 尝试找到最好的d_model值
+# 嵌入维度
+d_model = 128
+
+embedding_layer = nn.Embedding(vocab_size, d_model)
+dense_vectors = embedding_layer(token_ids_tensor)

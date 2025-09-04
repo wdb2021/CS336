@@ -97,54 +97,54 @@ import math
 # print(f"预期 ∂f/∂x = {expected_grad_x:.6f}")
 # print(f"预期 ∂f/∂y = {expected_grad_y:.6f}")
 
-class SimpleReLULayer:
-    def __init__(self, input_size, output_size):
-        self.W = torch.randn(output_size, input_size, requires_grad=True)
-        self.b = torch.randn(output_size, requires_grad=True)
-
-    def forward(self, x):
-        """
-        前向传播
-        :param x: 输入张量
-        :return: 输出张量
-        """
-        # 线性变换
-        linear = torch.matmul(self.W, x) + self.b
-
-        # ReLU激活
-        self.output = torch.relu(linear)
-        return self.output
-
-    def backward(self, upstream_grad):
-        """
-        反向传播
-        :param upstream_grad: 上游梯度
-        :return: 下游梯度
-        """
-        # 计算ReLU的梯度
-        relu_grad = (self.output > 0).float()
-
-        # 计算线性部分的梯度
-        linear_grad = upstream_grad * relu_grad
-
-        # 计算W和b的梯度
-        self.W.grad = torch.outer(linear_grad, self.x)  # ∂L/∂W = ∂L/∂z * ∂z/∂W
-        self.b.grad = linear_grad  # ∂L/∂b = ∂L/∂z * ∂z/∂b
-
-        # 计算输入的梯度
-        input_grad = torch.matmul(self.W.T, linear_grad)  # ∂L/∂x = ∂L/∂z * ∂z/∂x
-        return input_grad
-
-    def manual_backward(self, x, upstream_grad):
-        """
-        手动计算梯度
-        """
-        # 保存输入用于反向传播
-        self.x =x.clone().detach()
-
-        self.forward(x)
-
-        return self.backward(upstream_grad   )
+# class SimpleReLULayer:
+#     def __init__(self, input_size, output_size):
+#         self.W = torch.randn(output_size, input_size, requires_grad=True)
+#         self.b = torch.randn(output_size, requires_grad=True)
+#
+#     def forward(self, x):
+#         """
+#         前向传播
+#         :param x: 输入张量
+#         :return: 输出张量
+#         """
+#         # 线性变换
+#         linear = torch.matmul(self.W, x) + self.b
+#
+#         # ReLU激活
+#         self.output = torch.relu(linear)
+#         return self.output
+#
+#     def backward(self, upstream_grad):
+#         """
+#         反向传播
+#         :param upstream_grad: 上游梯度
+#         :return: 下游梯度
+#         """
+#         # 计算ReLU的梯度
+#         relu_grad = (self.output > 0).float()
+#
+#         # 计算线性部分的梯度
+#         linear_grad = upstream_grad * relu_grad
+#
+#         # 计算W和b的梯度
+#         self.W.grad = torch.outer(linear_grad, self.x)  # ∂L/∂W = ∂L/∂z * ∂z/∂W
+#         self.b.grad = linear_grad  # ∂L/∂b = ∂L/∂z * ∂z/∂b
+#
+#         # 计算输入的梯度
+#         input_grad = torch.matmul(self.W.T, linear_grad)  # ∂L/∂x = ∂L/∂z * ∂z/∂x
+#         return input_grad
+#
+#     def manual_backward(self, x, upstream_grad):
+#         """
+#         手动计算梯度
+#         """
+#         # 保存输入用于反向传播
+#         self.x =x.clone().detach()
+#
+#         self.forward(x)
+#
+#         return self.backward(upstream_grad   )
 
 # def test_relu_layer():
 #     layer = SimpleReLULayer(input_size=2, output_size=3)
@@ -183,34 +183,56 @@ class SimpleReLULayer:
 # # 运行测试
 # test_relu_layer()
 
-def gradient_check(layer, x, eps=1e-4):
-    """
-    梯度检查
-    :param layer: 层对象
-    :param x: 输入张量
-    :param eps: 误差
-    :return:
-    """
+# def gradient_check(layer, x, eps=1e-4):
+#     """
+#     梯度检查
+#     :param layer: 层对象
+#     :param x: 输入张量
+#     :param eps: 误差
+#     :return:
+#     """
+#
+#     W_orig = layer.W.clone()
+#     b_orig = layer.b.clone()
+#
+#     numerical_grad_W = torch.zeros_like(layer.W)
+#     for i in range(layer.W.shape[0]):
+#         for j in range(layer.W.shape[1]):
+#             layer.W[i, j] = W_orig[i, j] + eps
+#             output_plus = layer.forward(x)
+#
+#             layer.W[i, j] = W_orig[i, j] - eps
+#             output_minus = layer.forward(x)
+#
+#             numerical_grad_W[i, j] = (output_plus - output_minus).sum() / (2 * eps)
+#
+#             layer.W[i, j] = W_orig[i, j]
+#
+#     analytic_grad = layer.backward(torch.ones_like(layer.output))
+#
+#     diff_W = torch.norm(numerical_grad_W - layer.W.grad) / torch.norm(numerical_grad_W + layer.W.grad)
+#     print(f"权重梯度差异: {diff_W.item():.6f}")
 
-    W_orig = layer.W.clone()
-    b_orig = layer.b.clone()
+import torch.nn as nn
+import torch.nn.functional as F
 
-    numerical_grad_W = torch.zeros_like(layer.W)
-    for i in range(layer.W.shape[0]):
-        for j in range(layer.W.shape[1]):
-            layer.W[i, j] = W_orig[i, j] + eps
-            output_plus = layer.forward(x)
+class SimpleNN(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super().__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, output_size)
+        self.dropout = nn.Dropout(0.5)
 
-            layer.W[i, j] = W_orig[i, j] - eps
-            output_minus = layer.forward(x)
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return x
 
-            numerical_grad_W[i, j] = (output_plus - output_minus).sum() / (2 * eps)
+model = SimpleNN(input_size=784, hidden_size=256, output_size=10)
+print(model)
 
-            layer.W[i, j] = W_orig[i, j]
-
-    analytic_grad = layer.backward(torch.ones_like(layer.output))
-
-    diff_W = torch.norm(numerical_grad_W - layer.W.grad) / torch.norm(numerical_grad_W + layer.W.grad)
-    print(f"权重梯度差异: {diff_W.item():.6f}")
-
-gra
+input_data = torch.randn(32,784)
+print(f"input_data: {input_data}")
+output = model(input_data)
+print(f"output: {output}")

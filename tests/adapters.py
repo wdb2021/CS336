@@ -10,6 +10,7 @@ import time
 import numpy.typing as npt
 import torch
 from torch import Tensor
+from a_get_tokenizer import BPETokenizer
 
 
 def run_linear(
@@ -545,7 +546,7 @@ def get_tokenizer(
     vocab: dict[int, bytes],
     merges: list[tuple[bytes, bytes]],
     special_tokens: list[str] | None = None,
-) -> Any:
+) -> BPETokenizer:
     """Given a vocabulary, a list of merges, and a list of special tokens,
     return a BPE tokenizer that uses the provided vocab, merges, and special tokens.
 
@@ -561,7 +562,9 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    tokenizer = BPETokenizer(vocab, merges, special_tokens)
+
+    return tokenizer
 
 
 def run_train_bpe(
