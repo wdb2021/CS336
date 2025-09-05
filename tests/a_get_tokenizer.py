@@ -124,6 +124,7 @@ class BPETokenizer:
         # 处理位置索引
         if positions is None:
             # 默认连续位置索引[0, 1, 2, ..., seq_len-1]
+            print("positions is None, use default positions")
             positions = torch.arange(seq_len, device=device).float().unsqueeze(0)
         else:
             # 确保位置索引形状为(batch_size, seq_len)
@@ -153,10 +154,26 @@ class BPETokenizer:
         rotated_x1 = x1 * cos - x2 * sin
         rotated_x2 = x1 * sin + x2 * cos
 
-        # 重新组合
-        rotated = torch.stack([rotated_x1, rotated_x2], dim=-1)
-        rotated = rotated.reshape(batch_size, seq_len, d_model)
+        # 创建中间张量，重新组合
+        # rotated = torch.stack([rotated_x1, rotated_x2], dim=-1)
+        # rotated = rotated.reshape(batch_size, seq_len, d_model)
+
+        # 直接写入原始位置
+        rotated = torch.empty_like(x)
+        rotated[..., 0::2] = rotated_x1
+        rotated[..., 1::2] = rotated_x2
+
         # reshape可以处理非连续张量，而view只能处理连续张量
         # rotated = rotated.view(batch_size, seq_len, d_model)
 
         return rotated
+
+    '''
+    tensor([[[ 0.1831, -0.6780,  1.0938,  ..., -1.4765,  0.6920, -1.3248],
+         [ 0.1205, -0.6470, -0.1538,  ..., -0.6122,  1.1787, -0.1490],
+         [-0.3786, -0.3059, -1.6197,  ...,  0.2431, -0.3133,  1.6419],
+         ...,
+         [-0.5874,  0.5833, -0.9028,  ..., -0.4299, -0.1962, -0.9678],
+         [ 0.2678, -2.1414,  0.2910,  ..., -0.7407, -0.4761,  0.9817],
+         [ 1.1508, -1.0746, -0.0419,  ...,  0.4487, -0.0661, -1.5299]]],
+    '''

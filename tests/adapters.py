@@ -53,9 +53,21 @@ def run_embedding(
     Returns:
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
+    # 1. 验证输入形状
+    assert weights.shape == (vocab_size, d_model), \
+        f"权重矩阵形状应为({vocab_size}, {d_model})，实际为{weights.shape}"
 
-    raise NotImplementedError
+    # 2. 验证 token_ids 值范围
+    assert token_ids.min() >= 0 and token_ids.max() < vocab_size, \
+        f"token_ids 必须在 [0, {vocab_size-1}] 范围内"
 
+    # 3. 执行 embedding 查找
+    # 使用 token_ids 作为索引从 weights 中获取嵌入向量
+    embeddings = weights[token_ids]
+
+    embeddings = embeddings * torch.sqrt(torch.tensor(d_model, dtype=embeddings.dtype))
+
+    return embeddings
 
 def run_swiglu(
     d_model: int,

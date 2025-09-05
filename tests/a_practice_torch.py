@@ -216,23 +216,50 @@ import math
 import torch.nn as nn
 import torch.nn.functional as F
 
-class SimpleNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super().__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, output_size)
-        self.dropout = nn.Dropout(0.5)
+# class SimpleNN(nn.Module):
+#     def __init__(self, input_size, hidden_size, output_size):
+#         super().__init__()
+#         self.fc1 = nn.Linear(input_size, hidden_size)
+#         self.fc2 = nn.Linear(hidden_size, output_size)
+#         self.dropout = nn.Dropout(0.5)
+#
+#     def forward(self, x):
+#         x = F.relu(self.fc1(x))
+#         x = self.dropout(x)
+#         x = self.fc2(x)
+#         return x
+#
+# model = SimpleNN(input_size=784, hidden_size=256, output_size=10)
+# print(model)
+#
+# input_data = torch.randn(32,784)
+# print(f"input_data: {input_data}")
+# output = model(input_data)
+# print(f"output: {output}")
 
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
-        return x
+# x = torch.tensor([[[1.0, 2.0, 3.0, 4.0]]])
+# positions = torch.tensor([[3.1415]])  # 非零位置
+# rope_vectors = tokenizer.apply_rope(x, positions=positions)
+# print(rope_vectors)
+# a = torch.tensor([-2.2361])
+# b = torch.tensor([-2.2361e+00])
+#
+# print(torch.allclose(a, b))
 
-model = SimpleNN(input_size=784, hidden_size=256, output_size=10)
-print(model)
+input_dim = 16384
+output_dim = 32
+model = nn.Linear(input_dim, output_dim) # model的权重形状为[32, 16384]（即 [out_features, in_features]）
+w = nn.Parameter(torch.randn(input_dim, output_dim))
+x = nn.Parameter(torch.randn(input_dim))
+print(model.weight.shape)
+print(model.bias.shape)
+print(w.shape)
+print(w.t().shape)
 
-input_data = torch.randn(32,784)
-print(f"input_data: {input_data}")
-output = model(input_data)
-print(f"output: {output}")
+output = x @ w
+print(output.shape)
+output_model = model(x)   # 等价于output_model = x @ model.weight.T
+print(output_model.shape)
+model = nn.Linear(16384,32,bias=False)
+print(model.in_features)
+print(model.out_features)
