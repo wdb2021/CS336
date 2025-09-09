@@ -1,3 +1,5 @@
+import time
+
 import torch
 import math
 #
@@ -246,20 +248,103 @@ import torch.nn.functional as F
 #
 # print(torch.allclose(a, b))
 
-input_dim = 16384
-output_dim = 32
-model = nn.Linear(input_dim, output_dim) # model的权重形状为[32, 16384]（即 [out_features, in_features]）
-w = nn.Parameter(torch.randn(input_dim, output_dim))
-x = nn.Parameter(torch.randn(input_dim))
-print(model.weight.shape)
-print(model.bias.shape)
-print(w.shape)
-print(w.t().shape)
+# input_dim = 16384
+# output_dim = 32
+# model = nn.Linear(input_dim, output_dim) # model的权重形状为[32, 16384]（即 [out_features, in_features]）
+# w = nn.Parameter(torch.randn(input_dim, output_dim))
+# x = nn.Parameter(torch.randn(input_dim))
+# print(model.weight.shape)
+# print(model.bias.shape)
+# print(w.shape)
+# print(w.t().shape)
+#
+# output = x @ w
+# print(output.shape)
+# output_model = model(x)   # 等价于output_model = x @ model.weight.T
+# print(output_model.shape)
+# model = nn.Linear(16384,32,bias=False)
+# print(model.in_features)
+# print(model.out_features)
 
-output = x @ w
-print(output.shape)
-output_model = model(x)   # 等价于output_model = x @ model.weight.T
-print(output_model.shape)
-model = nn.Linear(16384,32,bias=False)
-print(model.in_features)
-print(model.out_features)
+from a_myLM import SwiGLU
+from a_myLM import LinearModel
+#
+d_model = 128
+# swiglu = SwiGLU(d_model)
+def benchmark():
+    d_model = 512
+    d_ff = 1365  # 8/3 * 512 ≈ 1365
+    batch_size = 32
+    seq_len = 128
+
+    # 输入
+    x = torch.randn(batch_size, seq_len, d_model)
+
+    # 方式一：单投影
+    input_proj = LinearModel(d_model, 2 * d_ff)
+
+    # 方式二：双投影
+    gate_proj = LinearModel(d_model, d_ff)
+    value_proj = LinearModel(d_model, d_ff)
+
+    # 测试速度
+    with torch.no_grad():
+        # 预热
+        _ = input_proj(x)
+        _ = gate_proj(x)
+        _ = value_proj(x)
+
+        # 方式一时间
+        start = time.time()
+        for _ in range(100):
+            x_proj = input_proj(x)
+            gate, value = x_proj.chunk(2, dim=-1)
+        time1 = time.time() - start
+
+        # 方式二时间
+        start = time.time()
+        for _ in range(100):
+            gate = gate_proj(x)
+            value = value_proj(x)
+        time2 = time.time() - start
+
+    print(f"单投影时间: {time1:.4f}s")
+    print(f"双投影时间: {time2:.4f}s")
+    print(f"速度比: {time2 / time1:.2f}x")
+benchmark()
+# 单投影时间: 1.1644s 单投影时间: 1.2563s
+# 双投影时间: 1.1766s 双投影时间: 1.2304s
+# 速度比: 1.01x 速度比: 0.98x
+
+#
+# print(f"d_model={d_model}, d_ff={swiglu.d_ff}")  # d_model=128, d_ff=341
+# # 输入数据
+# x = torch.randn(2, 10, d_model)  # (batch, seq, d_model)
+# output = swiglu(x)
+# print("输出形状:", output.shape)  # (2, 10, 128)
+
+#
+# from a_myLM import LayerNorm
+# # 测试数据
+# x = torch.randn(batch_size, seq_len, d_model)
+#
+# # 方法1测试
+# layer_norm = LayerNorm(d_model)
+# start = time.time()
+# for _ in range(num_layers):
+#     y = layer_norm(x)
+# time_method1 = time.time() - start
+#
+# # 方法2测试
+# start = time.time()
+# for _ in range(num_layers):
+#     y = LayerNorm(d_model)(x)
+# time_method2 = time.time() - start
+#
+# print(f"方法1时间: {time_method1:.6f}s")
+# print(f"方法2时间: {time_method2:.6f}s")
+# print(f"方法2/方法1时间比: {time_method2/time_method1:.2f}")
+
+# 方法1时间: 0.047188s 方法1时间: 0.006449s
+# 方法2时间: 0.030022s 方法2时间: 0.002985s
+# 方法2/方法1时间比: 0.64 方法2/方法1时间比: 0.46

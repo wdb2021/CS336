@@ -6,7 +6,13 @@ import random
 import numpy as np
 import torch
 from a_get_tokenizer import BPETokenizer
-from a_my_lm import LinearModel
+import a_myLM
+from a_myLM import Function
+from a_myLM import LinearModel
+from a_myLM import LayerNorm
+from a_myLM import SwiGLU
+from a_myLM import RMSNorm
+import sampling
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -82,19 +88,22 @@ nn.init.normal_(weights, mean=0, std=0.02)  # xavier初始化：nn.init.xavier_n
 
 dense_vectors = adapters.run_embedding(vocab_size, d_model, weights, batch_tensor)
 print("嵌入张量形状:", dense_vectors.shape)
+
 rope_vectors = tokenizer.apply_rope(dense_vectors)
 # print(rope_vectors)
 print("RoPE 处理后形状:", rope_vectors.shape)  #RoPE 处理后形状: torch.Size([1, 8, 128])
 
 # norm_vectors = F.normalize(rope_vectors, p=2, dim=-1)  #（L2归一化）余弦相似度计算，k-means聚类
-layer_norm = nn.LayerNorm(d_model)   #（层归一化）
-norm_vectors = layer_norm(rope_vectors) # 等价于：norm_vectors = nn.LayerNorm(d_model)(rope_vectors)
+# layer_norm = LayerNorm(d_model)   #（层归一化）
+# norm_vectors = layer_norm(rope_vectors) # 等价于：norm_vectors = nn.LayerNorm(d_model)(rope_vectors)
+# print("自定义归一化:", LayerNorm.extra_repr(layer_norm))
+# 自定义RMS Norm实现
+norm_vectors = RMSNorm(d_model)(rope_vectors)
 
-## todo: 实现层归一化
 # print(norm_vectors)
 print("归一化处理后形状:", norm_vectors.shape)  # 归一化处理后形状: torch.Size([1, 8, 128])
 
-# 自注意力子层（Pre-LN）
+# 自注意力子层（Pre-LN） Attention(Q,K,V) = softmax(QK^T/√d_k)V
 multihead_attn = nn.MultiheadAttention(
     embed_dim=d_model,
     num_heads=4,
@@ -104,6 +113,7 @@ multihead_attn = nn.MultiheadAttention(
 print(multihead_attn)
 ## todo: ablation study -- 尝试不同的attention heads数量
 
+# Standard Multihead Attention
 attn_output, attn_weights = multihead_attn(
     query=norm_vectors,  # 输入
     key=norm_vectors,    # 与query相同
@@ -112,49 +122,47 @@ attn_output, attn_weights = multihead_attn(
     # avarage_attn_weights=True,
 )
 
+
 print("注意力输出形状:", attn_output.shape)  # [batch_size, seq_len, d_model]  torch.Size([1, 8, 128])
 print("attn_weights shape:", attn_weights.shape)  # [batch_size, query_len, key_len]  torch.Size([1, 8, 8])
 
 residual_attn = attn_output + rope_vectors  # 残差连接使用原始输入
 print("残差输出形状:", residual_attn.shape)
 
-layer_norm = nn.LayerNorm(d_model)  # 两个实例的开销？
-norm_ffn = layer_norm(residual_attn) # norm_output = nn.LayerNorm(d_model)(residual_output)
+# layer_norm = nn.LayerNorm(d_model)  # 两个实例的开销？
+# norm_ffn = layer_norm(residual_attn)
+norm_ffn = RMSNorm(d_model)(residual_attn)
 print("第二次归一化处理后形状:", norm_ffn.shape)
 
-# 前馈网络子层（Pre-LN）
-d_ff = d_model * 4
-
+# 传统ffn层（Pre-LN）# LinearModel
+# d_ff = d_model * 4
 # ffn = nn.Sequential(
-#     nn.Linear(d_model, d_ff),
-#     nn.ReLU(),
-#     nn.Linear(d_ff, d_model),
+#     LinearModel(d_model, d_ff), # nn.Linear(d_model, d_ff),
+#     nn.GELU(),
+#     LinearModel(d_ff, d_model),
 # )
 
-# LinearModel
-ffn = nn.Sequential(
-    LinearModel(d_model, d_ff),
-    nn.ReLU(),
-    LinearModel(d_ff, d_model),
-)
-
+# SwiGLU 前馈层  ffn_output = SwiGLU(d_model)(norm_ffn)
+ffn = SwiGLU(d_model)
 ffn_output = ffn(norm_ffn)
+
 print("全连接输出形状:", ffn_output.shape)
 residual_final = residual_attn + ffn_output
 print("残差输出形状:", residual_final.shape)
 
 # 对最后一层输出归一化
-final_norm = nn.LayerNorm(d_model)(residual_final)
-print("第三次归一化处理后形状:", final_norm.shape)
+final_norm = RMSNorm(d_model)(residual_final)
+print("最后一次归一化处理后形状:", final_norm.shape)
 
-output_layer = nn.Linear(d_model, vocab_size)
-logits = output_layer(final_norm)
-print("输出形状:", logits.shape)
+logits = LinearModel(d_model, vocab_size)(final_norm)
+print("logits输出形状:", logits.shape)
 
-probs = F.softmax(logits, dim=-1)
+# probs = F.softmax(logits, dim=-1) # probs_i = e^{logits_i} / ∑_{j=1}^{vocab_size} e^{logits_j}
+probs = Function.softmax(logits, dim=-1)
 print("概率形状:", probs.shape)
 
 predicted_ids = torch.argmax(probs, dim=-1)
+# predicted_ids = sampling.top_p_sampling(probs, 0.9)
 print("预测ID:", predicted_ids)
 
 if predicted_ids.dim() == 1:
