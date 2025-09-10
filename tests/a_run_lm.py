@@ -12,6 +12,7 @@ from a_myLM import LinearModel
 from a_myLM import LayerNorm
 from a_myLM import SwiGLU
 from a_myLM import RMSNorm
+from a_myLM import CausalMultiheadAttention
 import sampling
 
 def set_seed(seed):
@@ -86,10 +87,10 @@ d_model = 128
 weights = nn.Parameter(torch.randn(vocab_size, d_model))
 nn.init.normal_(weights, mean=0, std=0.02)  # xavier初始化：nn.init.xavier_normal_(weights)
 
-dense_vectors = adapters.run_embedding(vocab_size, d_model, weights, batch_tensor)
+dense_vectors = Function.embedding(vocab_size, d_model, weights, batch_tensor)
 print("嵌入张量形状:", dense_vectors.shape)
 
-rope_vectors = tokenizer.apply_rope(dense_vectors)
+rope_vectors = Function.apply_rope(dense_vectors)
 # print(rope_vectors)
 print("RoPE 处理后形状:", rope_vectors.shape)  #RoPE 处理后形状: torch.Size([1, 8, 128])
 
@@ -99,29 +100,40 @@ print("RoPE 处理后形状:", rope_vectors.shape)  #RoPE 处理后形状: torch
 # print("自定义归一化:", LayerNorm.extra_repr(layer_norm))
 # 自定义RMS Norm实现
 norm_vectors = RMSNorm(d_model)(rope_vectors)
-
 # print(norm_vectors)
 print("归一化处理后形状:", norm_vectors.shape)  # 归一化处理后形状: torch.Size([1, 8, 128])
 
+# Standard Multihead Attention
 # 自注意力子层（Pre-LN） Attention(Q,K,V) = softmax(QK^T/√d_k)V
-multihead_attn = nn.MultiheadAttention(
+# multihead_attn = nn.MultiheadAttention(
+#     embed_dim=d_model,
+#     num_heads=4,
+#     dropout=0.1,      # 防止过拟合
+#     batch_first=True  # 输入输出为[batch, seq, features]
+# )
+# print("mh_attn模块: ", multihead_attn)
+# attn_output, attn_weights = multihead_attn(
+#     query=norm_vectors,  # 输入
+#     key=norm_vectors,    # 与query相同
+#     value=norm_vectors,  # 与query相同
+#     need_weights=True,         # 返回注意力权重
+#     # avarage_attn_weights=True,
+# )
+
+## TODO: ablation study -- 尝试不同的attention heads数量，yarn编码
+causal_multihead_attn = CausalMultiheadAttention(
     embed_dim=d_model,
     num_heads=4,
-    dropout=0.1,      # 防止过拟合
-    batch_first=True  # 输入输出为[batch, seq, features]
+    dropout=0.1,
+    batch_first=True
 )
-print(multihead_attn)
-## todo: ablation study -- 尝试不同的attention heads数量
-
-# Standard Multihead Attention
-attn_output, attn_weights = multihead_attn(
-    query=norm_vectors,  # 输入
-    key=norm_vectors,    # 与query相同
-    value=norm_vectors,  # 与query相同
-    need_weights=True,         # 返回注意力权重
-    # avarage_attn_weights=True,
+print("因果自注意力模块: ", causal_multihead_attn)
+attn_output, attn_weights = causal_multihead_attn(
+    query=norm_vectors,
+    key=norm_vectors,
+    value=norm_vectors,
+    need_weights=True,
 )
-
 
 print("注意力输出形状:", attn_output.shape)  # [batch_size, seq_len, d_model]  torch.Size([1, 8, 128])
 print("attn_weights shape:", attn_weights.shape)  # [batch_size, query_len, key_len]  torch.Size([1, 8, 8])

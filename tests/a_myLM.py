@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import math
+from a_get_tokenizer import BPETokenizer
 
 class LinearModel(nn.Module):
     def __init__(self, in_features: int, out_features: int,
@@ -33,7 +34,8 @@ class LinearModel(nn.Module):
         torch.nn.init.kaiming_uniform_(
             self.weight, a=math.sqrt(5), mode='fan_in', nonlinearity='linear'
         )
-        ## todo: 添加偏置，了解初始化的各个函数细节，如：激活函数的负斜率（负半轴斜率）gain bound
+        ## todo: 实现kaiming,xavier初始化；添加偏置，了解初始化的各个函数细节，如：激活函数的负斜率（负半轴斜率） gain bound
+
 
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features,
@@ -264,9 +266,91 @@ class Function(nn.Module):
         probs = exp_vals / sum_exp
         return probs
 
+    @staticmethod
+    def apply_rope(x: torch.Tensor, positions=None, rope_freq=10000.0) -> torch.Tensor:
+        """
+        应用 RoPE 位置编码，简易实现（支持完整序列和自回归生成）
+
+        参数:
+            x: 输入张量 (batch_size, seq_len, d_model)
+            rope_freq: RoPE 频率参数
+
+        返回:
+            添加了 RoPE 的嵌入向量
+        """
+        batch_size, seq_len, d_model = x.shape
+        device = x.device
+
+        # 处理位置索引
+        if positions is None:
+            # 默认连续位置索引[0, 1, 2, ..., seq_len-1]
+            print("positions is None, use default positions")
+            positions = torch.arange(seq_len, device=device).float().unsqueeze(0)
+        else:
+            # 确保位置索引形状为(batch_size, seq_len)
+            positions = positions.to(device).float()
+            if positions.dim() == 1:
+                positions = positions.unsqueeze(0)
+
+        # 当用户只提供了单个序列的位置索引，但需要处理多个序列时
+        # 扩展位置索引以匹配批次大小
+        if positions.size(0) == 1 and batch_size > 1:
+            positions = positions.expand(batch_size, positions.size(1))
+
+        # 创建频率项
+        dim_indices = torch.arange(0, d_model, 2, device=device).float()
+        inv_freq = 1.0 / (rope_freq ** (dim_indices / d_model))
+
+        # 计算正余弦值
+        freqs = torch.einsum('bi, j->bij', positions, inv_freq)
+        sin = torch.sin(freqs)
+        cos = torch.cos(freqs)
+
+        # 将嵌入向量分为两部分
+        x1 = x[:, :, 0::2]    #偶数索引
+        x2 = x[..., :, 1::2]  #奇数索引
+
+        # 应用 RoPE 旋转编码
+        rotated_x1 = x1 * cos - x2 * sin
+        rotated_x2 = x1 * sin + x2 * cos
+
+        # 创建中间张量，重新组合
+        # rotated = torch.stack([rotated_x1, rotated_x2], dim=-1)
+        # rotated = rotated.reshape(batch_size, seq_len, d_model)
+
+        # 直接写入原始位置
+        rotated = torch.empty_like(x)
+        rotated[..., 0::2] = rotated_x1
+        rotated[..., 1::2] = rotated_x2
+
+        # reshape可以处理非连续张量，而view只能处理连续张量
+        # rotated = rotated.view(batch_size, seq_len, d_model)
+
+        return rotated
+
+    @staticmethod
+    def embedding(vocab_size: int, d_model: int,
+                  weights: torch.Tensor | None = None,
+                  token_ids: torch.Tensor | None = None, ) -> torch.Tensor:
+        # 1. 验证输入形状
+        assert weights.shape == (vocab_size, d_model), \
+            f"权重矩阵形状应为({vocab_size}, {d_model})，实际为{weights.shape}"
+
+        # 2. 验证 token_ids 值范围
+        assert token_ids.min() >= 0 and token_ids.max() < vocab_size, \
+            f"token_ids 必须在 [0, {vocab_size - 1}] 范围内"
+        # 3. 执行 embedding 查找
+        # 使用 token_ids 作为索引从 weights 中获取嵌入向量
+        embeddings = weights[token_ids]
+
+        embeddings = embeddings * torch.sqrt(torch.tensor(d_model, dtype=embeddings.dtype))
+
+        return embeddings
+
 class CausalMultiheadAttention(nn.Module):
     """
      causal multi-head attention
+     TODO: 添加位置编码，将qkv换成一个权重矩阵
     """
     def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1, batch_first: bool = False):
         super().__init__()
@@ -284,26 +368,30 @@ class CausalMultiheadAttention(nn.Module):
         self.v_proj = LinearModel(embed_dim, embed_dim)
         self.out_proj = LinearModel(embed_dim, embed_dim)
 
+
+        # TODO:更精细的初始化权重
+        # nn.init.normal_(self.q_proj.weight, mean=0.0, std=self.embed_dim ** -0.5)
+
         # Scaling factor
-        # self.scaling = self.head_dim ** -0.5
+        self.scaling = self.head_dim ** -0.5
         # Dropout
         self.dropout = Dropout(dropout)
 
-    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
+    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, need_weights: bool = False,
                 attn_mask: torch.Tensor = None, key_padding_mask: torch.Tensor = None):
         """
         前向传播
 
         参数:
             query, key, value: 输入张量
-            attn_mask: 自定义注意力掩码
+            attn_mask: 自定义注意力掩码, bool类型
             key_padding_mask: 键填充掩码，处理变长序列，忽略填充部分（padding tokens）
         返回:
             attn_output: 注意力输出 [batch, seq, embed_dim]
             attn_weights: 注意力权重 [batch, num_heads, seq, seq]
         """
         if self.batch_first:
-            # 转换为 [seq_len, batch, embed_dim]
+            # 转换为 [seq_len, batch_size, embed_dim]
             query = query.transpose(0, 1)
             key = key.transpose(0, 1)
             value = value.transpose(0, 1)
@@ -312,31 +400,36 @@ class CausalMultiheadAttention(nn.Module):
         src_len = key.size(0)
         assert embed_dim == self.embed_dim, "embed_dim must be equal to self.embed_dim"
 
+        # 从embed_dim 转为 num_heads * head_dim 引入权重矩阵Wq, Wk, Wv
         q = self.q_proj(query)
         k = self.k_proj(key)
         v = self.v_proj(value)
 
-        # 分割多头
+        q = Function.apply_rope(q)
+        k = Function.apply_rope(k)
+
+        # 分割多头 (seq_len, batch_size, embed_dim) -> (batch_size * num_heads, seq_len, head_dim)
+        # 复制: clone()（保留计算图）、copy_()（原地复制）、tensor.clone()（深拷贝）。
+        # 投影后 q = x * Wq
         q = q.view(tgt_len, batch_size * self.num_heads, self.head_dim).transpose(0, 1)
         k = k.view(src_len, batch_size * self.num_heads, self.head_dim).transpose(0, 1)
         v = v.view(src_len, batch_size * self.num_heads, self.head_dim).transpose(0, 1)
 
         # 计算注意力分数
         # attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
-        # attn_scores = attn_scores.masked_fill(attn_mask, float('-inf'))
-        attn_scores = torch.bmm(q, k.transpose(1, 2)) / (self.head_dim ** 0.5)
+        attn_scores = torch.bmm(q, k.transpose(1, 2)) * self.scaling
 
         # 应用因果编码
         casual_mask = self.generate_casual_mask(tgt_len, src_len, device=attn_scores.device)
         attn_scores += casual_mask
 
         if attn_mask is not None:
-            attn_scores += attn_mask
+            attn_scores = attn_scores.masked_fill(attn_mask, float('-inf'))
 
         # 应用键填充
         if key_padding_mask is not None:
             # 确保掩码形状正确 [batch_size, src_len]
-            attn_scores = attn_scores.view(batch_size, self.num_heads, tgt_len, src_len)
+            attn_scores = attn_scores.contiguous().view(batch_size, self.num_heads, tgt_len, src_len)
             attn_scores = attn_scores.masked_fill(
                 key_padding_mask.unsqueeze(1).unsqueeze(2), float('-inf'),
             )
@@ -360,18 +453,17 @@ class CausalMultiheadAttention(nn.Module):
         if self.batch_first:
             attn_output = attn_output.transpose(0, 1)
 
-        return attn_output, attn_weights
+        if need_weights:
+            return attn_output, attn_weights
+        return attn_output
 
     def generate_casual_mask(self, tgt_len: int, src_len: int, device: torch.device) -> torch.Tensor:
         """
         生成一个因果编码的注意力掩码
-        参数:
-            tgt_len: 目标序列长度
-            src_len: 源序列长度
-            device: 设备
+        TODO: 带缓存的因果掩码
         返回:
             causal_mask: causal mask [tgt_len, src_len]
         """
-        # causal_mask = torch.triu(torch.ones(tgt_len, src_len, device=device), diagonal=1).bool()
         causal_mask = torch.triu(torch.full((tgt_len, src_len), float('-inf'), device=device), diagonal=1)
         return causal_mask
+
