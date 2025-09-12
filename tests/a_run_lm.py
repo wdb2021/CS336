@@ -5,15 +5,11 @@ import adapters
 import random
 import numpy as np
 import torch
-from a_get_tokenizer import BPETokenizer
+from a_tokenizer import BPETokenizer
 import a_myLM
-from a_myLM import Function
-from a_myLM import LinearModel
-from a_myLM import LayerNorm
-from a_myLM import SwiGLU
-from a_myLM import RMSNorm
-from a_myLM import CausalMultiheadAttention
+from a_myLM import Function, LinearModel, LayerNorm, SwiGLU, RMSNorm, CausalMultiheadAttention
 import sampling
+from a_transformer import TransformerBlock
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -54,8 +50,13 @@ for id_str, token_str in vocab_json.items():
     token_bytes = token_str.encode('latin1')
     vocab_loaded[token_id] = token_bytes
 
-tokenizer = BPETokenizer.get_tokenizer(vocab_loaded, merges_loaded, special_tokens)
-
+# tokenizer = BPETokenizer.get_tokenizer(vocab_loaded, merges_loaded, special_tokens)
+tokenizer = BPETokenizer(
+    vocab_id2token_file='vocab_5M_id2token.json',
+    merges_file='merges_5M.txt',
+    special_tokens=["<|endoftext|>"],
+    space_replacement="Ġ"
+)
 # 单样本预测
 text = "hello, world"  #[285, 288, 111, 44, 196, 160, 573, 705]
 token_ids_tensor = torch.tensor(tokenizer.encode(text), dtype=torch.long).unsqueeze(0)
@@ -73,7 +74,9 @@ token_ids_list = [tokenizer.encode(text) for text in texts]
 token_ids_tensors = [torch.tensor(ids, dtype=torch.long) for ids in token_ids_list]
 
 # 批次处理(单批次或多批次)
-batch_tensor = nn.utils.rnn.pad_sequence(token_ids_tensors, batch_first=True, padding_value=0)
+# batch_tensor = nn.utils.rnn.pad_sequence(token_ids_tensors, batch_first=True, padding_value=0)
+batch_tensor, padding_mask = tokenizer.batch_encode(texts, padding=True)
+print("attn_mask: ", padding_mask.shape)
 print("批次张量形状:", batch_tensor.shape)  # torch.Size([2, 13])
 print("批次张量内容:\n", batch_tensor)
 
@@ -133,6 +136,7 @@ attn_output, attn_weights = causal_multihead_attn(
     key=norm_vectors,
     value=norm_vectors,
     need_weights=True,
+    key_padding_mask=padding_mask
 )
 
 print("注意力输出形状:", attn_output.shape)  # [batch_size, seq_len, d_model]  torch.Size([1, 8, 128])
@@ -162,20 +166,25 @@ print("全连接输出形状:", ffn_output.shape)
 residual_final = residual_attn + ffn_output
 print("残差输出形状:", residual_final.shape)
 
+# 封装为一个Transformer块
+# block = TransformerBlock(d_model, num_heads=4, dropout=0.1, batch_first=True)
+# residual_final = block(norm_vectors)
+
 # 对最后一层输出归一化
 final_norm = RMSNorm(d_model)(residual_final)
 print("最后一次归一化处理后形状:", final_norm.shape)
 
 logits = LinearModel(d_model, vocab_size)(final_norm)
+logits = logits.masked_fill(logits.isinf(), float('-1e10'))
 print("logits输出形状:", logits.shape)
 
 # probs = F.softmax(logits, dim=-1) # probs_i = e^{logits_i} / ∑_{j=1}^{vocab_size} e^{logits_j}
 probs = Function.softmax(logits, dim=-1)
 print("概率形状:", probs.shape)
 
-predicted_ids = torch.argmax(probs, dim=-1)
-# predicted_ids = sampling.top_p_sampling(probs, 0.9)
-print("预测ID:", predicted_ids)
+# predicted_ids = torch.argmax(probs, dim=-1)
+predicted_ids = sampling.top_p_sampling(probs, 0.9)
+print("预测ID形状:", predicted_ids.shape)
 
 if predicted_ids.dim() == 1:
     predicted_ids = predicted_ids.unsqueeze(0) # 单样本转为多样本

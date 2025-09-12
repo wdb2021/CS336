@@ -7,7 +7,7 @@ from adapters import run_train_bpe
 import json
 import os
 import time
-from a_get_tokenizer import BPETokenizer
+from a_tokenizer import BPETokenizer
 
 input_path = "D:\Model\cs336\\assignment1-basics-main\\tests\\fixtures\\tinystories_sample_5M.txt"
 vocab_size = 1500

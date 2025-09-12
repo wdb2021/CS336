@@ -5,13 +5,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import math
-from a_get_tokenizer import BPETokenizer
+from a_tokenizer import BPETokenizer
+from typing import Iterable, Union, Callable, Optional
+from collections import OrderedDict
 
 class LinearModel(nn.Module):
     def __init__(self, in_features: int, out_features: int,
-                 device: torch.device | None = None,
                  dtype: torch.dtype | None = None,
-                bias: bool = False):
+                 bias: bool = False,
+                 device=None):
         """
         手动实现的线性层，默认使用 Kaiming 初始化
         参数:
@@ -26,11 +28,11 @@ class LinearModel(nn.Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.device = device
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.dtype = dtype
 
         self.weight = nn.Parameter(torch.empty(out_features, in_features,
-                                               device=device, dtype=dtype))
+                                               device=self.device, dtype=dtype))
         torch.nn.init.kaiming_uniform_(
             self.weight, a=math.sqrt(5), mode='fan_in', nonlinearity='linear'
         )
@@ -38,9 +40,9 @@ class LinearModel(nn.Module):
 
 
         if bias:
-            self.bias = nn.Parameter(torch.empty(out_features,
-                                                device=device, dtype=dtype))
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            self.bias = nn.Parameter(torch.empty(out_features, device=self.device, dtype=dtype))
+            fan_in = self.weight.shape[1]
+
             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
             nn.init.uniform_(self.bias, -bound, bound)
         else:
@@ -48,11 +50,39 @@ class LinearModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """前向传播：y = xA^T + b"""
-        return torch.nn.functional.linear(x, self.weight, self.bias)
+        # return torch.nn.functional.linear(x, self.weight, self.bias)
+        if x.device != self.device:
+            x = x.to(self.device)
+        if x.dtype != self.dtype:
+            x = x.to(self.dtype)
+
+        # 手动矩阵乘
+        if x.dim() == 2:
+            output = x @ self.weight.t()
+        elif x.dim() > 2:
+            # 处理多维输入 (如批次数据)
+            # 展平额外维度
+            original_shape = x.shape
+            # 合并除最后一个维度外的所有维度
+            x_flat = x.contiguous().view(-1, original_shape[-1])
+            output = x_flat @ self.weight.t()
+            # 恢复原始形状 (除最后一个维度)
+            output = output.view(*original_shape[:-1], self.out_features)
+        else:
+            raise ValueError(f"输入维度必须至少为2，当前为 {x.dim()}")
+
+        if self.bias is not None:
+            output += self.bias
+        return output
+
+    def extra_repr(self) -> str:
+        """额外信息表示"""
+        return (f"in_features={self.in_features}, out_features={self.out_features}, "
+                f"bias={self.bias is not None}, device={self.device}, dtype={self.dtype}")
 
 
 class LayerNorm(nn.Module):
-    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True):
+    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True, device=None):
         """
         自定义层归一化实现
 
@@ -66,12 +96,13 @@ class LayerNorm(nn.Module):
             if isinstance(normalized_shape, int) else normalized_shape
         self.eps = eps
         self.elementwise_affine = elementwise_affine
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         if self.elementwise_affine:
             # 可学习的缩放参数 (gamma)
-            self.weight = nn.Parameter(torch.ones(*self.normalized_shape))
+            self.weight = nn.Parameter(torch.ones(*self.normalized_shape, device=self.device))
             # 可学习的偏移参数 (beta)
-            self.bias = nn.Parameter(torch.zeros(*self.normalized_shape))
+            self.bias = nn.Parameter(torch.zeros(*self.normalized_shape, device=self.device))
         else:
             # 没有可学习的参数，注册为None
             self.register_parameter('weight', None)
@@ -106,16 +137,18 @@ class RMSNorm(nn.Module):
     RMS Normalization (RMSNorm)
     RMSNorm(x) = x / sqrt(Var(x) + eps)
     """
-    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True):
+    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True, device=None):
         super().__init__()
         self.normalized_shape = (normalized_shape, ) \
             if isinstance(normalized_shape, int) else normalized_shape
         self.eps = eps
         self.elementwise_affine = elementwise_affine
+        # 获取设备
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         if self.elementwise_affine:
             # 可学习的缩放参数 (gamma)
-            self.weight = nn.Parameter(torch.ones(*self.normalized_shape))
+            self.weight = nn.Parameter(torch.ones(*self.normalized_shape, device=self.device))
         else:
             self.register_parameter('weight', None)
         self.register_parameter('bias', None)
@@ -129,6 +162,9 @@ class RMSNorm(nn.Module):
         # 均方根, L2范数计算
         # rms = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + self.eps)
         ## TODO：手动实现该CUDA和Triton写法
+        if x.device != self.device:
+            x = x.to(self.device)
+
         rms = x.norm(2, dim=-1, keepdim=True) / (x.size(-1) ** 0.5)
         rms = rms.clamp(min=self.eps)  # 确保不小于 eps
 
@@ -151,10 +187,14 @@ class SwiGLU(nn.Module):
     SwiGLU(x) = Swish(xW + b) ⊗ (xV + c)
     Swish(x) = x * sigmoid(βx), β=1
     """
-    def __init__(self, d_model: int, method='round'):
+    def __init__(self, d_model: int, d_ff=None, method='round', device=None):
         super().__init__()
-        # 计算d_ff
-        self.d_ff = self.calculate_d_ff(d_model, method)
+        # 默认计算d_ff = (8/3)*d_model
+        if d_ff is None:
+            self.d_ff = self.calculate_d_ff(d_model, method)
+        else :
+            self.d_ff = d_ff
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # 创建两个线性层,一次性创建更简洁高效
         ## todo: 两种方式性能测试benchmark
@@ -162,8 +202,8 @@ class SwiGLU(nn.Module):
         # self.gate_proj = LinearModel(d_model, self.d_ff)
         # 第二个线性变换 (值路径)
         # self.value_proj = LinearModel(d_model, self.d_ff)
-        self.input_proj = LinearModel(d_model, 2 * self.d_ff)
-        self.output_proj = LinearModel(self.d_ff, d_model)
+        self.input_proj = LinearModel(d_model, 2 * self.d_ff, device=self.device)
+        self.output_proj = LinearModel(self.d_ff, d_model, device=self.device)
         self.swish = lambda x: x * torch.sigmoid(x)
 
     @staticmethod
@@ -195,7 +235,7 @@ class SwiGLU(nn.Module):
 
 
 class Dropout(nn.Module):
-    def __init__(self, p: float = 0.5, inplace: bool = False):
+    def __init__(self, p: float = 0.5, inplace: bool = False, device=None):
         """
         自定义 Dropout 层
 
@@ -204,6 +244,7 @@ class Dropout(nn.Module):
             inplace (bool): 是否在原张量上进行操作 (默认: False)
         """
         super().__init__()
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         if p<=0 or p>1:
             raise ValueError(f'Invalid dropout probability: {p}')
 
@@ -253,8 +294,20 @@ class Function(nn.Module):
         返回:
             概率分布张量，形状与输入相同
         """
+        # 替换 NaN 为负无穷
+        # logits = torch.where(torch.isnan(logits), torch.tensor(float('-inf'), device=logits.device), logits)
+
+        # 找到最大值
         max_vals = torch.max(logits, dim=dim, keepdim=True).values
-        shifted = logits - max_vals
+
+        # 找到所有元素都是负无穷的行
+        all_inf_mask = torch.all(logits == float('-inf'), dim=dim, keepdim=True)
+
+        # 将全为负无穷的行替换为0（避免后续计算问题）
+        safe_logits = torch.where(all_inf_mask, torch.zeros_like(logits), logits)
+
+        # 计算偏移值
+        shifted = safe_logits - max_vals
 
         # 计算指数
         exp_vals = torch.exp(shifted)
@@ -262,8 +315,18 @@ class Function(nn.Module):
         # 计算分母(指数和)
         sum_exp = torch.sum(exp_vals, dim=dim, keepdim=True)
 
+        # 使用 clamp 确保分母不小于 eps
+        sum_exp = torch.clamp(sum_exp, min=1e-10)
+
         # 计算概率
         probs = exp_vals / sum_exp
+
+        # 处理全为负无穷的行
+        # 将这些行的概率设置为均匀分布
+        if all_inf_mask.any():
+            vocab_size = logits.size(dim)
+            uniform_probs = torch.ones_like(probs) / vocab_size
+            probs = torch.where(all_inf_mask, uniform_probs, probs)
         return probs
 
     @staticmethod
@@ -284,7 +347,7 @@ class Function(nn.Module):
         # 处理位置索引
         if positions is None:
             # 默认连续位置索引[0, 1, 2, ..., seq_len-1]
-            print("positions is None, use default positions")
+            # print("positions is None, use default positions")
             positions = torch.arange(seq_len, device=device).float().unsqueeze(0)
         else:
             # 确保位置索引形状为(batch_size, seq_len)
@@ -352,21 +415,22 @@ class CausalMultiheadAttention(nn.Module):
      causal multi-head attention
      TODO: 添加位置编码，将qkv换成一个权重矩阵
     """
-    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1, batch_first: bool = False):
+    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1, batch_first: bool = False, device=None):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         self.dropout = Dropout(dropout)
         self.batch_first = batch_first
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
 
         # Linear projections
-        self.q_proj = LinearModel(embed_dim, embed_dim)
-        self.k_proj = LinearModel(embed_dim, embed_dim)
-        self.v_proj = LinearModel(embed_dim, embed_dim)
-        self.out_proj = LinearModel(embed_dim, embed_dim)
+        self.q_proj = LinearModel(embed_dim, embed_dim, device=self.device)
+        self.k_proj = LinearModel(embed_dim, embed_dim, device=self.device)
+        self.v_proj = LinearModel(embed_dim, embed_dim, device=self.device)
+        self.out_proj = LinearModel(embed_dim, embed_dim, device=self.device)
 
 
         # TODO:更精细的初始化权重
@@ -375,10 +439,15 @@ class CausalMultiheadAttention(nn.Module):
         # Scaling factor
         self.scaling = self.head_dim ** -0.5
         # Dropout
-        self.dropout = Dropout(dropout)
+        self.dropout = Dropout(dropout, device=self.device)
 
-    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, need_weights: bool = False,
-                attn_mask: torch.Tensor = None, key_padding_mask: torch.Tensor = None):
+    def forward(
+            self,
+            query: torch.Tensor,
+            key: torch.Tensor,
+            value: torch.Tensor,
+            need_weights: bool = False,
+            key_padding_mask: torch.Tensor = None):
         """
         前向传播
 
@@ -423,8 +492,18 @@ class CausalMultiheadAttention(nn.Module):
         casual_mask = self.generate_casual_mask(tgt_len, src_len, device=attn_scores.device)
         attn_scores += casual_mask
 
-        if attn_mask is not None:
-            attn_scores = attn_scores.masked_fill(attn_mask, float('-inf'))
+        # key_padding_mask 为bool 矩阵类型
+        # if key_padding_mask is not None:
+        #     if key_padding_mask.dim() == 2: # [batch_size, seq_len] -> [batch_size, 1, seq_len] -> [batch_size, tgt_len, seq_len]
+        #         key_padding_mask = key_padding_mask.unsqueeze(1).expand(-1,tgt_len, -1)
+        #     else:
+        #         raise ValueError(f"不支持的掩码维度: {key_padding_mask.dim()}")
+        #
+        #     # 拓展维度以匹配多头
+        #     key_padding_mask = key_padding_mask.unsqueeze(1)  # [batch_size, 1, tgt_len, src_len]
+        #     key_padding_mask = key_padding_mask.expand(-1, self.num_heads, -1, -1) # [batch_size, num_heads, tgt_len, src_len]
+        #     key_padding_mask = key_padding_mask.contiguous().view(batch_size * self.num_heads, tgt_len, src_len)
+        #     attn_scores = attn_scores.masked_fill(key_padding_mask, float('-inf'))
 
         # 应用键填充
         if key_padding_mask is not None:
@@ -466,4 +545,3 @@ class CausalMultiheadAttention(nn.Module):
         """
         causal_mask = torch.triu(torch.full((tgt_len, src_len), float('-inf'), device=device), diagonal=1)
         return causal_mask
-

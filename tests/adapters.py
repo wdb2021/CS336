@@ -10,7 +10,7 @@ import time
 import numpy.typing as npt
 import torch
 from torch import Tensor
-from a_get_tokenizer import BPETokenizer
+from a_tokenizer import BPETokenizer
 
 
 def run_linear(
