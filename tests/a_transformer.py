@@ -5,7 +5,9 @@ from a_myLM import Dropout, Function, LinearModel, RMSNorm, SwiGLU, CausalMultih
 class TransformerBlock(nn.Module):
     def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1, batch_first: bool = False,device: torch.device = None, d_ff=None, method='round'):
         super().__init__()
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
         # 输入归一化层
         self.norm1 = RMSNorm(embed_dim, device=device)
         self.attn = CausalMultiheadAttention(embed_dim, num_heads, dropout, batch_first, device=self.device)

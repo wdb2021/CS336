@@ -22,6 +22,7 @@ def set_seed(seed):
     ## Todo: 查看torch.backends.cudnn  学习benchmark
 
 set_seed(42)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 input_path = "D:\Model\cs336\\assignment1-basics-main\\tests\\fixtures\\tinystories_sample_5M.txt"
 vocab_size = 1500
@@ -76,7 +77,7 @@ token_ids_tensors = [torch.tensor(ids, dtype=torch.long) for ids in token_ids_li
 # 批次处理(单批次或多批次)
 # batch_tensor = nn.utils.rnn.pad_sequence(token_ids_tensors, batch_first=True, padding_value=0)
 batch_tensor, padding_mask = tokenizer.batch_encode(texts, padding=True)
-print("attn_mask: ", padding_mask.shape)
+print("padding_mask: ", padding_mask.device)
 print("批次张量形状:", batch_tensor.shape)  # torch.Size([2, 13])
 print("批次张量内容:\n", batch_tensor)
 
@@ -88,6 +89,8 @@ d_model = 128
 # weights = torch.randn(vocab_size, d_model)
 # 权重初始化
 weights = nn.Parameter(torch.randn(vocab_size, d_model))
+if torch.cuda.is_available():
+    weights = weights.to('cuda')
 nn.init.normal_(weights, mean=0, std=0.02)  # xavier初始化：nn.init.xavier_normal_(weights)
 
 dense_vectors = Function.embedding(vocab_size, d_model, weights, batch_tensor)
@@ -158,9 +161,10 @@ print("第二次归一化处理后形状:", norm_ffn.shape)
 #     LinearModel(d_ff, d_model),
 # )
 
-# SwiGLU 前馈层  ffn_output = SwiGLU(d_model)(norm_ffn)
-ffn = SwiGLU(d_model)
-ffn_output = ffn(norm_ffn)
+# SwiGLU 前馈层
+# ffn = SwiGLU(d_model)
+# ffn_output = ffn(norm_ffn)
+ffn_output = SwiGLU(d_model)(norm_ffn)
 
 print("全连接输出形状:", ffn_output.shape)
 residual_final = residual_attn + ffn_output

@@ -148,6 +148,9 @@ class BPETokenizer:
         返回:
             包含 input_ids 和 attention_mask 的字典
         """
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
         # 编码文本
         token_ids_list = [self.encode(text, add_special_tokens) for text in texts]
 

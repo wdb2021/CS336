@@ -19,13 +19,8 @@ texts = [
     "the quick brown fox",
     "jumps over the lazy dog"
 ]
-# token_ids_list = [tokenizer.encode(text) for text in texts]
-# token_ids_tensors = [torch.tensor(ids, dtype=torch.long) for ids in token_ids_list]
-# batch_tensor = nn.utils.rnn.pad_sequence(token_ids_tensors, batch_first=True, padding_value=0)
 
-# batch_tensor, padding_mask = tokenizer.batch_encode(texts, padding=True)
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda')
 batch_tensor, padding_mask = tokenizer.batch_encode(texts, padding=True, device=device)
 
 vocab_size = tokenizer.vocab_size
@@ -36,10 +31,9 @@ nn.init.normal_(weights, mean=0, std=0.02)
 dense_vectors = Function.embedding(vocab_size, d_model, weights, batch_tensor)
 rope_vectors = Function.apply_rope(dense_vectors)
 norm_vectors = RMSNorm(d_model, device=device)(rope_vectors)
-print("输入向量形状:", rope_vectors.device)
 
-num_layers = 4
-num_heads = 4
+num_layers = 32
+num_heads = 8
 blocks = nn.Sequential(*[
     TransformerBlock(d_model, num_heads, dropout=0.1, batch_first=True, device=device)
     for _ in range(num_layers)

@@ -28,7 +28,9 @@ class LinearModel(nn.Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
         self.dtype = dtype
 
         self.weight = nn.Parameter(torch.empty(out_features, in_features,
@@ -96,7 +98,9 @@ class LayerNorm(nn.Module):
             if isinstance(normalized_shape, int) else normalized_shape
         self.eps = eps
         self.elementwise_affine = elementwise_affine
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
 
         if self.elementwise_affine:
             # 可学习的缩放参数 (gamma)
@@ -144,7 +148,9 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.elementwise_affine = elementwise_affine
         # 获取设备
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
 
         if self.elementwise_affine:
             # 可学习的缩放参数 (gamma)
@@ -194,7 +200,9 @@ class SwiGLU(nn.Module):
             self.d_ff = self.calculate_d_ff(d_model, method)
         else :
             self.d_ff = d_ff
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
 
         # 创建两个线性层,一次性创建更简洁高效
         ## todo: 两种方式性能测试benchmark
@@ -244,7 +252,9 @@ class Dropout(nn.Module):
             inplace (bool): 是否在原张量上进行操作 (默认: False)
         """
         super().__init__()
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
         if p<=0 or p>1:
             raise ValueError(f'Invalid dropout probability: {p}')
 
@@ -404,6 +414,7 @@ class Function(nn.Module):
             f"token_ids 必须在 [0, {vocab_size - 1}] 范围内"
         # 3. 执行 embedding 查找
         # 使用 token_ids 作为索引从 weights 中获取嵌入向量
+
         embeddings = weights[token_ids]
 
         embeddings = embeddings * torch.sqrt(torch.tensor(d_model, dtype=embeddings.dtype))
@@ -422,7 +433,9 @@ class CausalMultiheadAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
         self.dropout = Dropout(dropout)
         self.batch_first = batch_first
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
 
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
 
