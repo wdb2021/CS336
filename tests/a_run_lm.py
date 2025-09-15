@@ -173,6 +173,15 @@ print("残差输出形状:", residual_final.shape)
 # 封装为一个Transformer块
 # block = TransformerBlock(d_model, num_heads=4, dropout=0.1, batch_first=True)
 # residual_final = block(norm_vectors)
+# blocks = nn.Sequential(*[
+#     TransformerBlock(d_model, num_heads, dropout=0.1, batch_first=True, device=device)
+#     for _ in range(num_layers)
+# ])
+#
+# for i, block in enumerate(blocks):
+#     print(f"通过块 {i + 1} 前形状: {norm_vectors.shape}")
+#     norm_vectors = block(norm_vectors, padding_mask)
+#     print(f"通过块 {i + 1} 后形状: {norm_vectors.shape}")
 
 # 对最后一层输出归一化
 final_norm = RMSNorm(d_model)(residual_final)
