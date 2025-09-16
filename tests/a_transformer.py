@@ -4,14 +4,15 @@ from a_myLM import Dropout, Function, LinearModel, RMSNorm, SwiGLU, CausalMultih
 
 class TransformerBlock(nn.Module):
     def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1, batch_first: bool = False,
-                 device: torch.device = None, d_ff=None, method='round'):
+                 device: torch.device = None, d_ff=None, key_padding_mask=None, method='round'):
         super().__init__()
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.device = device
         # 输入归一化层
         self.norm1 = RMSNorm(embed_dim, device=device)
-        self.attn = CausalMultiheadAttention(embed_dim, num_heads, dropout, batch_first, device=self.device)
+        self.attn = CausalMultiheadAttention(embed_dim, num_heads, dropout, batch_first,
+                                             key_padding_mask=key_padding_mask, device=self.device)
         # FFN前归一化层
         self.norm2 = RMSNorm(embed_dim, device=device)
         if d_ff is not None:
@@ -32,8 +33,7 @@ class TransformerBlock(nn.Module):
             query=hidden_states,
             key=hidden_states,
             value=hidden_states,
-            kv_cache=kv_cache,
-            key_padding_mask=key_padding_mask)
+            kv_cache=kv_cache)
         hidden_states = attn_output + residual
 
         # 2. FFN
@@ -48,7 +48,7 @@ class TransformerBlock(nn.Module):
 
 class TransformerStack(nn.Module):
     def __init__(self, num_layers: int, embed_dim: int, num_heads: int, dropout=0.1,
-                 batch_first=False,device=None, d_ff=None, method='round'):
+                 batch_first=False, key_padding_mask=None, device=None, d_ff=None, method='round'):
         super().__init__()
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -61,13 +61,14 @@ class TransformerStack(nn.Module):
                 batch_first,
                 device=self.device,
                 d_ff=d_ff,
+                key_padding_mask=key_padding_mask,
                 method=method)
             for _ in range(num_layers)
         ])
         self.num_layers = num_layers
         self.batch_first = batch_first
 
-    def forward(self, hidden_states, key_padding_mask=None, kv_caches=None):
+    def forward(self, hidden_states, kv_caches=None):
         """
         参数:
             hidden_states: 输入张量 [batch, seq_len, embed_dim]
@@ -86,8 +87,7 @@ class TransformerStack(nn.Module):
         for i, layer in enumerate(self.layers):
             hidden_states, new_kv_cache = layer(
                 hidden_states,
-                kv_cache=kv_caches[i],
-                key_padding_mask=key_padding_mask)
+                kv_cache=kv_caches[i])
             new_kv_caches.append(new_kv_cache)
 
         return hidden_states, new_kv_caches

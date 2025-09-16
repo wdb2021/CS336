@@ -426,13 +426,15 @@ class CausalMultiheadAttention(nn.Module):
      causal multi-head attention
      TODO: 添加位置编码，将qkv换成一个权重矩阵
     """
-    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1, batch_first: bool = False, device=None):
+    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.1, batch_first: bool = False,
+                 key_padding_mask: torch.Tensor = None, device=None):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         self.dropout = Dropout(dropout)
         self.batch_first = batch_first
+        self.key_padding_mask = key_padding_mask
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.device = device
@@ -460,8 +462,7 @@ class CausalMultiheadAttention(nn.Module):
             key: torch.Tensor,
             value: torch.Tensor,
             kv_cache: tuple | None = None,
-            need_weights: bool = False,
-            key_padding_mask: torch.Tensor = None):
+            need_weights: bool = False):
         """
         前向传播 添加kv缓存
 
@@ -489,17 +490,6 @@ class CausalMultiheadAttention(nn.Module):
         src_len = key.size(0)
         assert embed_dim == self.embed_dim, "embed_dim must be equal to self.embed_dim"
 
-        # 处理kv缓存
-        if kv_cache is not None:
-            key_cache, value_cache = kv_cache
-            cache_len = key_cache.size(0)
-            assert cache_len <= src_len, "kv_cache cannot be longer than the input sequence"
-            key = torch.cat([key_cache, key], dim=0)
-            value = torch.cat([value_cache, value], dim=0)
-            src_len = key.size(0)
-        else:
-            cache_len = 0
-
         # 从embed_dim 转为 num_heads * head_dim 引入权重矩阵Wq, Wk, Wv
         q = self.q_proj(query)
         k = self.k_proj(key)
@@ -507,6 +497,22 @@ class CausalMultiheadAttention(nn.Module):
 
         q = Function.apply_rope(q)
         k = Function.apply_rope(k)
+
+        # 处理kv缓存
+        if kv_cache is not None:
+            key_cache, value_cache = kv_cache  #  [batch_size, num_heads, cache_len, head_dim]
+            cache_len = key_cache.size(0)
+            print("key_cache: ", key_cache.shape)
+            print("k shape:", k.shape)
+            assert cache_len <= src_len, "kv_cache cannot be longer than the input sequence"
+            k = torch.cat([key_cache, k], dim=0)  #  [seq_len, batch_size, embed_dim]
+            v = torch.cat([value_cache, v], dim=0)
+            src_len = k.size(0)
+        else:
+            cache_len = 0
+            print("kv_cache is None")
+
+        new_kv_cache = (k, v)
 
         # 分割多头 (seq_len, batch_size, embed_dim) -> (batch_size * num_heads, seq_len, head_dim)
         # 复制: clone()（保留计算图）、copy_()（原地复制）、tensor.clone()（深拷贝）。
@@ -523,34 +529,23 @@ class CausalMultiheadAttention(nn.Module):
         casual_mask = self.generate_casual_mask(tgt_len, src_len, device=attn_scores.device)
         attn_scores += casual_mask
 
-        # key_padding_mask 为bool 矩阵类型
-        # if key_padding_mask is not None:
-        #     if key_padding_mask.dim() == 2: # [batch_size, seq_len] -> [batch_size, 1, seq_len] -> [batch_size, tgt_len, seq_len]
-        #         key_padding_mask = key_padding_mask.unsqueeze(1).expand(-1,tgt_len, -1)
-        #     else:
-        #         raise ValueError(f"不支持的掩码维度: {key_padding_mask.dim()}")
-        #
-        #     # 拓展维度以匹配多头
-        #     key_padding_mask = key_padding_mask.unsqueeze(1)  # [batch_size, 1, tgt_len, src_len]
-        #     key_padding_mask = key_padding_mask.expand(-1, self.num_heads, -1, -1) # [batch_size, num_heads, tgt_len, src_len]
-        #     key_padding_mask = key_padding_mask.contiguous().view(batch_size * self.num_heads, tgt_len, src_len)
-        #     attn_scores = attn_scores.masked_fill(key_padding_mask, float('-inf'))
-
         # 应用键填充
-        if key_padding_mask is not None:
+        if self.key_padding_mask is not None:
             # 确保掩码形状正确 [batch_size, src_len]
-            attn_scores = attn_scores.contiguous().view(batch_size, self.num_heads, tgt_len, src_len)
-            attn_scores = attn_scores.masked_fill(
-                key_padding_mask.unsqueeze(1).unsqueeze(2), float('-inf'),
-            )
-            attn_scores = attn_scores.view(batch_size * self.num_heads, tgt_len, src_len)
+            # print(f"attn_scores shape: {attn_scores.shape}")  # [batch_size, num_heads, tgt_len, src_len]
+            # print(f"key_padding_mask shape: {self.key_padding_mask.shape}")  # [batch_size, src_len_orig]
+            if cache_len is None:
+                attn_scores = attn_scores.contiguous().view(batch_size, self.num_heads, tgt_len, src_len)
+                attn_scores = attn_scores.masked_fill(
+                    self.key_padding_mask.unsqueeze(1).unsqueeze(2), float('-inf'),
+                )
+                attn_scores = attn_scores.view(batch_size * self.num_heads, tgt_len, src_len)
 
         # 计算注意力权重
         attn_weights = Function.softmax(attn_scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
 
         # 加权值
-        # attn_output = torch.matmul(attn_weights, v)
         attn_output = torch.bmm(attn_weights, v)
         attn_output = attn_output.transpose(0, 1).reshape(tgt_len, batch_size, embed_dim)
 
@@ -560,33 +555,15 @@ class CausalMultiheadAttention(nn.Module):
         # 输出投影
         attn_output = self.out_proj(attn_output)
 
-        # 准备新的 KV 缓存 - 优化处理
-        # new_k = k[:, cache_len:, :]  # [batch*heads, new_seq_len, head_dim]
-        # new_v = v[:, cache_len:, :]  # [batch*heads, new_seq_len, head_dim]
-        new_k = k[:, cache_len:, :] if cache_len > 0 else k
-        new_v = v[:, cache_len:, :] if cache_len > 0 else v
-
-        # 重塑为缓存格式 [batch, num_heads, new_seq_len, head_dim]
-        new_key_cache = new_k.contiguous().view(batch_size, self.num_heads, -1, self.head_dim)
-        new_value_cache = new_v.contiguous().view(batch_size, self.num_heads, -1, self.head_dim)
-
-        if kv_cache is not None:
-            # new_key_cache = torch.cat([key_cache, new_key_cache], dim=2) 这个需要kv存储时转置
-            new_key_cache = torch.cat([key_cache, new_key_cache], dim=0)
-            new_value_cache = torch.cat([value_cache, new_value_cache], dim=0)
-
-        new_kv_cache = (new_key_cache, new_value_cache)
-
         if self.batch_first:
             attn_output = attn_output.transpose(0, 1)
 
         if need_weights:
-            # attn_weights.shape: [batch_size * num_heads, tgt_len, src_len] -> [batch_size, num_heads, tgt_len, src_len]\
             attn_weights = attn_weights.view(batch_size, self.num_heads, tgt_len, src_len)
             return attn_output, new_kv_cache, attn_weights
-            # return attn_output, attn_weights
+
         return attn_output, new_kv_cache
-        # return attn_output
+
 
     def generate_casual_mask(self, tgt_len: int, src_len: int, device: torch.device) -> torch.Tensor:
         """

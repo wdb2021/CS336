@@ -131,15 +131,25 @@ causal_multihead_attn = CausalMultiheadAttention(
     embed_dim=d_model,
     num_heads=4,
     dropout=0.1,
-    batch_first=True
+    batch_first=True,
+    key_padding_mask=padding_mask
 )
 print("因果自注意力模块: ", causal_multihead_attn)
-attn_output, attn_weights = causal_multihead_attn(
+kv_cache = None
+attn_output, kv_cache, attn_weights = causal_multihead_attn(
     query=norm_vectors,
     key=norm_vectors,
     value=norm_vectors,
-    need_weights=True,
-    key_padding_mask=padding_mask
+    kv_cache=kv_cache,
+    need_weights=True
+)
+
+attn_output, kv_cache, attn_weights = causal_multihead_attn(
+    query=norm_vectors,
+    key=norm_vectors,
+    value=norm_vectors,
+    kv_cache=kv_cache,
+    need_weights=True
 )
 
 print("注意力输出形状:", attn_output.shape)  # [batch_size, seq_len, d_model]  torch.Size([1, 8, 128])
