@@ -503,14 +503,14 @@ class CausalMultiheadAttention(nn.Module):
             key_cache, value_cache = kv_cache  #  [batch_size, num_heads, cache_len, head_dim]
             cache_len = key_cache.size(0)
             print("key_cache: ", key_cache.shape)
-            print("k shape:", k.shape)
-            assert cache_len <= src_len, "kv_cache cannot be longer than the input sequence"
+            # print("k shape:", k.shape)
+
             k = torch.cat([key_cache, k], dim=0)  #  [seq_len, batch_size, embed_dim]
             v = torch.cat([value_cache, v], dim=0)
             src_len = k.size(0)
         else:
             cache_len = 0
-            print("kv_cache is None")
+            # print("kv_cache is None")
 
         new_kv_cache = (k, v)
 

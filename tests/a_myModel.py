@@ -150,8 +150,8 @@ try:
 
     texts = [
         "hello, world",
-        # "tell me a story.",
-        # "the quick brown fox",
+        "tell me a story.",
+        "the quick brown fox",
         # "jumps over the lazy dog",
         # "this is a longer text to ensure sufficient runtime",
         # "another sample text for performance analysis",
