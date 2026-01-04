@@ -27,7 +27,7 @@ __global__ void rms_norm_kernel(
     for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
         if (threadIdx.x < offset) {
             shared_sum[threadIdx.x] += shared_sum[threadIdx.x + offset];
-        }
+    }
         __syncthreads();
     }
 
